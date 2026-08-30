@@ -1,0 +1,7 @@
+1: There is a mole in the middle of the garden.
+2: In the middle of the garden there is a mole.
+3: A mole is in the middle of the garden.
+4: There is a mole in the middle of the field.
+5: There is no mole in the middle of the garden.
+h: "𒈗𒂊 𒂍 𒈬𒆕" (The king built the temple)
+mole: There is a mole in the middle of the

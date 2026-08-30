@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lift"
+version = "0.1.0"
+description = "Probing how transformer context shifts token embedding spaces"
+readme = "README.md"
+requires-python = ">=3.11"
+
+# Direct imports only. Versions are floors rather than pins -- the exact
+# environment this was developed against is in requirements.txt.
+dependencies = [
+    "equinox>=0.13",
+    "jax>=0.10",
+    "matplotlib>=3.11",
+    "numpy>=2.0",
+    "safetensors>=0.8",
+    "huggingface_hub>=1.19",
+    "transformers>=5.12",
+    "scipy>=1.17",
+    "scikit-learn>=1.9",
+    "pillow>=11.0",
+]
+
+[project.optional-dependencies]
+# UMAP runs on GPU through cuML, which is installed from the NVIDIA index:
+#   pip install --extra-index-url=https://pypi.nvidia.com lift[gpu]
+gpu = ["cuml-cu13>=26.6"]
+# The two interactive point-cloud viewers.
+viz = ["pyvista>=0.48", "trame>=3.13", "trame-vtk>=2.11", "trame-vuetify>=3.2", "laspy>=2.5"]
+# The Lorenz-attractor side project.
+lorenz = ["diffrax>=0.7", "optax>=0.2"]
+# logit-lens table rendering.
+lens = ["wcwidth>=0.8"]
+# Running the tests that check lift.models.gemma4_12b against transformers'
+# own Gemma4Unified implementation. Without it those tests skip.
+reference = ["torch>=2.0", "pytest>=8.0"]
+
+[project.scripts]
+lift-potree = "lift.viz.potree:main"
+lift-pointcloud = "lift.viz.pointcloud:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
