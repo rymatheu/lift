@@ -23,7 +23,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from lift.embeddings import contextual, initial_scales, load
-from lift.geometry.dimred import reduce
+from lift.geometry.dimred import BACKENDS, backend_in_use, reduce
 from lift.paths import DATA_DIR, output
 from lift.study import BRANCH_FILES, PREFIX_FILES
 from lift.viz.plots import plot_3d_umap
@@ -56,14 +56,22 @@ def main():
                     help="skip rescaling rows to the initial embedding lengths")
     ap.add_argument("--n-neighbors", type=int, default=15)
     ap.add_argument("--min-dist", type=float, default=0.1)
+    ap.add_argument("--backend", choices=BACKENDS, default="auto",
+                    help="UMAP backend: cuml (GPU) or umap-learn (CPU); "
+                         "auto prefers cuml (default: auto)")
+    ap.add_argument("--random-state", type=int,
+                    help="seed UMAP for a reproducible layout (slower)")
     args = ap.parse_args()
+
+    print(f"UMAP backend: {backend_in_use(args.backend)}")
 
     scales = None if args.no_rescale else initial_scales()
 
     if args.files:
         for path in args.files:
             X = load(path)
-            X_r = reduce(X, args.n_neighbors, args.min_dist)
+            X_r = reduce(X, args.n_neighbors, args.min_dist,
+                         backend=args.backend, random_state=args.random_state)
             save_and_plot(X_r, Path(path).stem)
         return
 
@@ -73,7 +81,8 @@ def main():
 
     for i, filename in enumerate(files):
         X = contextual(filename, scales)
-        X_r = reduce(X, args.n_neighbors, args.min_dist)
+        X_r = reduce(X, args.n_neighbors, args.min_dist,
+                     backend=args.backend, random_state=args.random_state)
         save_and_plot(X_r, str(i + offset))
 
 

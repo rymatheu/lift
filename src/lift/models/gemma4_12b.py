@@ -418,6 +418,7 @@ def get_contextual_embeddings(
     path: str = "embed_contextual.npy",
     save: bool = True,
     honour_sliding_window: bool = True,
+    token_ids=None,
 ):
     """Context-conditioned embedding for every vocabulary token.
 
@@ -450,6 +451,7 @@ def get_contextual_embeddings(
         path=path,
         save=save,
         sliding_window=window,
+        token_ids=token_ids,
     )
 
 

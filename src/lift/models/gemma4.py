@@ -406,7 +406,8 @@ def get_contextual_embeddings(
     context_ids: jax.Array,
     chunk_size: int = 2048,
     path: str = "embed_contextual.npy",
-    save: bool = True
+    save: bool = True,
+    token_ids=None,
 ):
     """Context-conditioned embedding for every vocabulary token.
 
@@ -428,7 +429,7 @@ def get_contextual_embeddings(
         forward, context_ids,
         vocab_size=V, hidden_size=H,
         chunk_size=chunk_size, path=path, save=save,
-        sliding_window=None,
+        sliding_window=None, token_ids=token_ids,
     )
 
 

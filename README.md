@@ -32,20 +32,41 @@ Loads SmolLM2-135M, Gemma 4 E2B or Gemma 4 12B via Equinox + safetensors.
 pip install -e .
 ```
 
-UMAP reduction runs on the GPU through cuML, and the point-cloud viewers
-need their own stack:
+UMAP needs a backend. On an NVIDIA card, cuML from the NVIDIA index; anywhere
+else, umap-learn on the CPU:
 
 ```bash
-pip install --extra-index-url=https://pypi.nvidia.com -e '.[gpu,viz]'
+pip install --extra-index-url=https://pypi.nvidia.com -e '.[gpu]'   # CUDA
+pip install -e '.[cpu]'                                             # CPU
 ```
 
-`requirements.txt` is a full freeze of the development environment if you
-need to reproduce it exactly. To fetch the third-party Potree viewer used by
-`lift-potree`:
+The point-cloud viewers are a third extra, and `scripts/fetch_potree.sh`
+downloads the Potree assets they serve:
 
 ```bash
+pip install -e '.[viz]'
 ./scripts/fetch_potree.sh
 ```
+
+`requirements.txt` is a full freeze of the development environment if you need
+to reproduce it exactly.
+
+### model weights
+
+You do not re-download them. `build_model()` goes through
+`huggingface_hub`, which downloads a file only if it is not already in the
+local cache — `~/.cache/huggingface/hub` by default, about 2 GB for Gemma 4
+E2B. Later runs read from there.
+
+```bash
+export HF_HOME=/big/disk/hf        # put the cache somewhere else
+export HF_HUB_OFFLINE=1            # never touch the network; cache or fail
+```
+
+What *does* happen on every `build_model()` is converting safetensors into
+JAX arrays. That cost is per process, not per download, which is the main
+argument for working in a notebook or a long-lived session rather than
+re-running a script.
 
 ## usage
 
@@ -78,6 +99,7 @@ src/lift/          the library
   embeddings.py    loading matrices and rescaling them to initial lengths
   paths.py         every data / output / vendor path in one place
 experiments/       one script per experiment, each with --help
+notebooks/         probe_to_potree.ipynb, the pipeline end to end
 tests/             tests for the geometry helpers
 lorenz/            an unrelated side project (Lorenz attractor + transformer)
 scripts/           fetch_potree.sh
@@ -93,6 +115,134 @@ data/      embedding matrices, reduced point clouds
 outputs/   figures, gifs, frame sequences, Potree octrees
 vendor/    the Potree viewer
 ```
+
+## from a context to a point cloud
+
+The full path, for one context. `notebooks/probe_to_potree.ipynb` is this
+same walk with the output visible at each step, and it runs on a laptop
+because it probes a few thousand tokens rather than all 262k.
+
+### 1. probe
+
+For every token in the vocabulary, compute the hidden state it would take
+*if it came next* after the context. One matrix per context prefix:
+
+```bash
+python experiments/extract_context_embeddings.py \
+    --context "There is a mole in the middle of"
+```
+
+That writes `data/embeddings/contexts/<subdir>/1-bos-embed.npy`,
+`2-bosThere-embed.npy`, and so on — one file per prefix, each
+`vocab x hidden`. For Gemma 4 E2B that is about **1.5 GB per file**, so nine
+prefixes is ~14 GB. Check your disk first.
+
+To branch the finished context by one more word instead of walking its
+prefixes:
+
+```bash
+python experiments/extract_context_embeddings.py --branch
+```
+
+Branch files continue the numbering after the prefixes (10, 11, ...), so the
+two runs together form one sequence.
+
+### 2. reduce to 3D
+
+```bash
+python experiments/reduce_embeddings.py --set prefix
+python experiments/reduce_embeddings.py --set branch
+```
+
+Writes `data/reduced/1.npy` ... `data/reduced/18.npy` and a matplotlib
+preview of each under `outputs/reduced/`. Add `--backend umap-learn` to force
+the CPU path, or `--random-state 0` for a reproducible layout.
+
+### 3. view
+
+```bash
+lift-potree data/reduced/10.npy
+```
+
+Builds a Potree octree next to the `.npy`, serves it, and prints a URL.
+Click a point and the overlay names the token; the search box takes a word
+and flies to it. Re-serving an octree you already built skips the conversion:
+
+```bash
+lift-potree --serve-only --out-dir data/reduced/10_potree
+```
+
+`lift-pointcloud` is the lighter alternative — pyvista, no converter needed,
+fine up to a few hundred thousand points.
+
+### PotreeConverter
+
+`lift-potree` needs two things in `vendor/potree/`. `scripts/fetch_potree.sh`
+gets the **viewer assets**. The **converter binary** is a separate C++ build
+and is not fetched for you:
+
+```bash
+git clone https://github.com/potree/PotreeConverter
+cd PotreeConverter && mkdir build && cd build
+cmake .. && make -j
+cp PotreeConverter <repo>/vendor/potree/PotreeConverter
+```
+
+It links against laszip; if the binary cannot find `liblaszip.so` at run
+time, put it next to the binary — `lift-potree` adds that directory to
+`LD_LIBRARY_PATH` before calling it.
+
+Without the converter you can still use `--serve-only` on an octree built
+elsewhere, and `lift-pointcloud` and the matplotlib previews work regardless.
+
+## on a MacBook
+
+Everything except CUDA works. The honest summary: **run JAX on the CPU**.
+
+| | on Apple Silicon |
+|---|---|
+| JAX | CPU only in practice — see below |
+| UMAP | `umap-learn` (`.[cpu]`), not cuML |
+| Potree viewer | works; build PotreeConverter from source |
+| `lift-pointcloud` | works |
+
+```bash
+pip install -e '.[cpu,viz]'
+./scripts/fetch_potree.sh
+LIFT_NOTEBOOK_SMOKE=1 jupyter lab notebooks/probe_to_potree.ipynb   # plumbing check
+jupyter lab notebooks/probe_to_potree.ipynb                          # the real thing
+```
+
+### about jax-metal
+
+Apple's `jax-metal` plugin is not a dependable path. As of late 2025 the JAX
+maintainers closed the open jax-metal issues citing no active development,
+and the newest macOS it supports is Sonoma. Two community projects have
+picked it up — `metaljax`, a PJRT plugin passing ~99.5% of the JAX 0.11 test
+suite, and `jax-mps`, pinned to `jaxlib==0.9.0` — but both are experimental,
+neither supports float64, and both are single-device only.
+
+CPU JAX is the reliable choice, and for this workload it is not as bad as it
+sounds: probing is dominated by a few large matmuls over a 262k-row
+embedding table, and Apple's Accelerate-backed BLAS handles those reasonably.
+Expect a full-vocabulary probe to take hours rather than minutes, which is
+why the notebook probes a subset.
+
+If you want to try Metal anyway, do it in a throwaway environment and check
+`jax.devices()` before trusting any output:
+
+```bash
+python -c "import jax; print(jax.devices(), jax.default_backend())"
+```
+
+### memory
+
+The matrices are the real constraint, not the model. One contextual
+embedding matrix for Gemma 4 E2B is `262144 x 1536` float32 — about 1.5 GB,
+held in RAM before it is written. On a 16 GB machine, probe a subset
+(`token_ids=` in `get_contextual_embeddings`, or the notebook's `N_PROBE`)
+rather than the whole vocabulary. The 12B is wider still, which is why its
+default `chunk_size` is smaller.
 
 ## experiments
 
