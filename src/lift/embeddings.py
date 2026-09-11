@@ -25,8 +25,46 @@ def initial(model: str = "gemma4") -> jnp.ndarray:
 
 
 def context_path(filename: str, subdir: str = CONTEXT_SUBDIR):
-    """Path to one contextual embedding file."""
-    return CONTEXT_DIR / subdir / filename
+    """Path to one contextual embedding file.
+
+    Falls back to matching on the leading index when the exact name is not
+    present. The names in lift.study record how these files were originally
+    written, and small differences creep in -- a missing hyphen in
+    "17bosThere_..." , a different rendering of the BOS token, a reworded
+    context -- none of which change which step of the study a file belongs
+    to. The index is what identifies it.
+    """
+    directory = CONTEXT_DIR / subdir
+    exact = directory / filename
+    if exact.exists() or not directory.is_dir():
+        return exact
+
+    wanted = _leading_index(filename)
+    if wanted is None:
+        return exact
+
+    matches = sorted(
+        p for p in directory.glob("*-embed.npy")
+        if _leading_index(p.name) == wanted
+    )
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise FileNotFoundError(
+            f"{filename!r} is not in {directory}, and several files share index "
+            f"{wanted}: {[p.name for p in matches]}. Remove the duplicates."
+        )
+    return exact
+
+
+def _leading_index(filename: str) -> int | None:
+    """The run of digits a context filename starts with, e.g. 17 for 17bos..."""
+    digits = ""
+    for ch in filename:
+        if not ch.isdigit():
+            break
+        digits += ch
+    return int(digits) if digits else None
 
 
 def contextual(filename: str, scales=None, subdir: str = CONTEXT_SUBDIR) -> jnp.ndarray:

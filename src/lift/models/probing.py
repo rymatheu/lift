@@ -58,22 +58,31 @@ def contextual_embeddings(
     save: bool = True,
     sliding_window: int | None = None,
     progress_every: int = 20,
+    token_ids=None,
 ):
-    """Run the probe over the whole vocabulary, one chunk at a time.
+    """Run the probe over the vocabulary, one chunk at a time.
 
     forward_masked(input_ids, mask, position_ids) must return the final
     hidden states, (n + C, hidden). When the model has sliding-attention
     layers, pass its window and forward_masked will receive a mask built as
     a dict {"sliding": ..., "full": ...} instead of a single array.
+
+    token_ids probes only those tokens instead of the whole vocabulary,
+    returning rows in the order given. A full probe of a 262k vocabulary
+    writes a multi-gigabyte matrix; a few thousand tokens is enough to see
+    the geometry and runs on a laptop.
     """
     n = context_ids.shape[0]
-    out = np.zeros((vocab_size, hidden_size), dtype=np.float32)
 
-    for start in range(0, vocab_size, chunk_size):
-        end = min(start + chunk_size, vocab_size)
+    probes = jnp.arange(vocab_size) if token_ids is None else jnp.asarray(token_ids)
+    total = int(probes.shape[0])
+    out = np.zeros((total, hidden_size), dtype=np.float32)
+
+    for start in range(0, total, chunk_size):
+        end = min(start + chunk_size, total)
         C = end - start
 
-        input_ids = jnp.concatenate([context_ids, jnp.arange(start, end)])
+        input_ids = jnp.concatenate([context_ids, probes[start:end]])
         position_ids = probe_positions(n, C)
 
         if sliding_window is None:
@@ -88,9 +97,9 @@ def contextual_embeddings(
         out[start:end] = np.array(hidden[n:].astype(jnp.float32))
 
         if progress_every and start % (chunk_size * progress_every) == 0:
-            print(f"  {end}/{vocab_size}")
+            print(f"  {end}/{total}")
 
     if save:
         np.save(path, out)
-        print(f"saved contextual embeddings ({vocab_size}, {hidden_size}) -> {path}")
+        print(f"saved contextual embeddings ({total}, {hidden_size}) -> {path}")
     return out
